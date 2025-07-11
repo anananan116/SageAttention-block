@@ -81,6 +81,7 @@ def sageattn(
     is_causal: bool = False,
     sm_scale: Optional[float] = None,
     return_lse: bool = False,
+    block_ends: Optional[List[int]] = None,
     **kwargs: Any,
 ):
     """
@@ -107,8 +108,11 @@ def sageattn(
         The tensor layout, either "HND" or "NHD".
         Default: "HND".
 
-    is_causal : bool
-        Whether to apply causal mask to the attention matrix. Only applicable when qo_len == kv_len.
+    is_causal : bool | str
+        Whether to apply causal mask to the attention matrix.
+        - If False: No masking
+        - If True: Standard causal masking (only applicable when qo_len == kv_len)
+        - If "block_causal": Block-wise causal attention (requires block_ends parameter)
         Default: False.
 
     sm_scale : Optional[float]
@@ -117,6 +121,14 @@ def sageattn(
     return_lse : bool
         Whether to return the log sum of the exponentiated attention weights. Used for cases like Ring Attention.
         Default: False.
+
+    block_ends : Optional[List[int]]
+        Exclusive cumulative lengths of attention blocks for block-wise causal attention.
+        Required when is_causal="block_causal". For example, [2000, 4000, 6000] means:
+        - Block 0: positions 0-1999 (bidirectional attention within block)
+        - Block 1: positions 2000-3999 (can attend to block 0 causally, bidirectional within block 1)
+        - Block 2: positions 4000-5999 (can attend to blocks 0-1 causally, bidirectional within block 2)
+        Default: None.
 
     Returns
     -------
@@ -145,7 +157,7 @@ def sageattn(
     elif arch == "sm89":
         return sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp16")
     elif arch == "sm90":
-        return sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp32")
+        return sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp32", block_ends=block_ends)
     elif arch == "sm120":
         return sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp16") # sm120 has accurate fp32 accumulator for fp8 mma and triton kernel is currently not usable on sm120.
     else:
@@ -783,6 +795,7 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     pv_accum_dtype: str = "fp32+fp32",
     smooth_k: bool = True,
     return_lse: bool = False,
+    block_ends: Optional[List[int]] = None,
     **kwargs: Any,
 ) -> torch.Tensor:
     """
@@ -809,8 +822,11 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
         The tensor layout, either "HND" or "NHD".
         Default: "HND".
 
-    is_causal : bool
-        Whether to apply causal mask to the attention matrix. Only applicable when qo_len == kv_len.
+    is_causal : bool | str
+        Whether to apply causal mask to the attention matrix. 
+        - If False: No masking
+        - If True: Standard causal masking (only applicable when qo_len == kv_len)
+        - If "block_causal": Block-wise causal attention (requires block_ends parameter)
         Default: False.
 
     qk_quant_gran : str
@@ -833,6 +849,14 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     return_lse : bool
         Whether to return the log sum of the exponentiated attention weights. Used for cases like Ring Attention.
         Default: False.
+
+    block_ends : Optional[List[int]]
+        Exclusive cumulative lengths of attention blocks for block-wise causal attention.
+        Required when is_causal="block_causal". For example, [2000, 4000, 6000] means:
+        - Block 0: positions 0-1999 (bidirectional attention within block)
+        - Block 1: positions 2000-3999 (can attend to block 0 causally, bidirectional within block 1)
+        - Block 2: positions 4000-5999 (can attend to blocks 0-1 causally, bidirectional within block 2)
+        Default: None.
 
     Returns
     -------
@@ -865,7 +889,17 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     torch.cuda.set_device(v.device)
 
     _tensor_layout = 0 if tensor_layout == "NHD" else 1
-    _is_caual = 1 if is_causal else 0
+    
+    # Handle is_causal parameter - support both bool and string
+    if isinstance(is_causal, str) and is_causal == "block_causal":
+        _is_causal = 2  # Block causal mode
+        if block_ends is None:
+            raise ValueError("block_ends must be provided when is_causal='block_causal'")
+    elif is_causal:
+        _is_causal = 1  # Standard causal
+    else:
+        _is_causal = 0  # No causal
+    
     _qk_quant_gran = 3 if qk_quant_gran == "per_thread" else 2
     _return_lse = 1 if return_lse else 0
 
@@ -921,9 +955,9 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
 
     if pv_accum_dtype == "fp32":
         raise NotImplementedError("Please use pv_accum_dtype='fp32+fp32' for sm90.")
-        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
     elif pv_accum_dtype == "fp32+fp32":
-        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_caual, _qk_quant_gran, sm_scale, _return_lse)
+        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse, block_ends)
 
     o = o[..., :head_dim_og]
 

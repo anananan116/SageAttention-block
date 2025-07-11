@@ -26,12 +26,12 @@ WARP_K = 64
 kernel = qattn.qk_int8_sv_f8_accum_f32_attn_inst_buf
 
 _qk_quant_gran = 3 if args.quant_gran == 'per_thread' else 2
-
-is_causal = False
-_is_causal = 1 if is_causal else 0
-print(f"is_causal: {is_causal}")
+block_size = 1024
+print(f"Causal")
 for seq_len in {1024, 2048, 4096, 8192, 16384, 32768}:
-    flops = 4 * head * batch * headdim * seq_len * seq_len / (2 if is_causal else 1)
+    num_blocks = (seq_len + block_size - 1) // block_size
+    block_ends = [min(i * block_size, seq_len) for i in range(1, num_blocks + 1)]
+    flops = 4 * head * batch * headdim * seq_len * seq_len / 2
 
     q = torch.randint(-95, 95, (batch, head, seq_len, headdim), dtype=torch.int8, device="cuda")
     k = torch.randint(-95, 95, (batch, head, seq_len, headdim), dtype=torch.int8, device="cuda")
@@ -48,17 +48,19 @@ for seq_len in {1024, 2048, 4096, 8192, 16384, 32768}:
 
     v = torch.randn(batch, head, headdim, seq_len, dtype=torch.float16, device="cuda").to(torch.float8_e4m3fn)
     sm_scale = 1 / (headdim ** 0.5)
-    for i in range(5): kernel(q, k, v, o, q_scale, k_scale, 1, _is_causal, _qk_quant_gran, sm_scale, 0)
+    for i in range(5): kernel(q, k, v, o, q_scale, k_scale, 1, 1,# 0 for bidirectional, 1 for causal, 2 for block causal
+                              _qk_quant_gran, sm_scale, 0, block_ends)
     torch.cuda.synchronize()
-    _, time = benchmark_forward(kernel, q, k, v, o, q_scale, k_scale, 1, _is_causal, _qk_quant_gran, sm_scale, 0, repeats=100, verbose=False, desc='Triton')
-    print(f'{seq_len} flops:{flops/time.mean*1e-12}')
+    _, time = benchmark_forward(kernel, q, k, v, o, q_scale, k_scale, 1, 1,# 0 for bidirectional, 1 for causal, 2 for block causal
+                                _qk_quant_gran, sm_scale, 0, block_ends, repeats=100, verbose=False, desc='Triton')
+    print(f'seq_len:{seq_len} flops:{flops/time.mean*1e-12}')
 
 
-is_causal = True
-_is_causal = 1 if is_causal else 0
-print(f"is_causal: {is_causal}")
+print(f"Block Causal")
 for seq_len in {1024, 2048, 4096, 8192, 16384, 32768}:
-    flops = 4 * head * batch * headdim * seq_len * seq_len / (2 if is_causal else 1)
+    num_blocks = (seq_len + block_size - 1) // block_size
+    block_ends = [min(i * block_size, seq_len) for i in range(1, num_blocks + 1)]
+    flops = 4 * head * batch * headdim * seq_len * seq_len / 2
 
     q = torch.randint(-95, 95, (batch, head, seq_len, headdim), dtype=torch.int8, device="cuda")
     k = torch.randint(-95, 95, (batch, head, seq_len, headdim), dtype=torch.int8, device="cuda")
@@ -75,7 +77,9 @@ for seq_len in {1024, 2048, 4096, 8192, 16384, 32768}:
 
     v = torch.randn(batch, head, headdim, seq_len, dtype=torch.float16, device="cuda").to(torch.float8_e4m3fn)
     sm_scale = 1 / (headdim ** 0.5)
-    for i in range(5): kernel(q, k, v, o, q_scale, k_scale, 1, _is_causal, _qk_quant_gran, sm_scale, 0)
+    for i in range(5): kernel(q, k, v, o, q_scale, k_scale, 1, 2,# 0 for bidirectional, 1 for causal, 2 for block causal
+                              _qk_quant_gran, sm_scale, 0, block_ends)
     torch.cuda.synchronize()
-    _, time = benchmark_forward(kernel, q, k, v, o, q_scale, k_scale, 1, _is_causal, _qk_quant_gran, sm_scale, 0, repeats=100, verbose=False, desc='Triton')
-    print(f'{seq_len} flops:{flops/time.mean*1e-12}')
+    _, time = benchmark_forward(kernel, q, k, v, o, q_scale, k_scale, 1, 2,# 0 for bidirectional, 1 for causal, 2 for block causal
+                                _qk_quant_gran, sm_scale, 0, block_ends, repeats=100, verbose=False, desc='Triton')
+    print(f'seq_len:{seq_len} flops:{flops/time.mean*1e-12}')

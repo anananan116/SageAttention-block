@@ -36,6 +36,7 @@
 enum class MaskMode {
     kNone = 0,
     kCausal = 1,
+    kBlockCausal = 2,
 };
 
 enum class DataType {

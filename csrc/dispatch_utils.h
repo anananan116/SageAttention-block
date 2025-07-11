@@ -40,6 +40,25 @@
   } else if (is_causal == 0) {                                  \
     constexpr bool IS_CAUSAL = false;                           \
     __VA_ARGS__                                                 \
+  } else if (is_causal == 2) {                                  \
+    constexpr bool IS_CAUSAL = false;                           \
+    __VA_ARGS__                                                 \
+  }  else {                                                     \
+    std::ostringstream err_msg;                                 \
+    err_msg << "Unsupported causal mode: " << int(is_causal);   \
+    throw std::invalid_argument(err_msg.str());                 \
+  }
+
+#define DISPATCH_MASK_MODE(is_causal, MASK_MODE, ...)           \
+  if (is_causal == 0) {                                         \
+    constexpr int MASK_MODE = 0;  /* kNone */                   \
+    __VA_ARGS__                                                 \
+  } else if (is_causal == 1) {                                  \
+    constexpr int MASK_MODE = 1;  /* kCausal */                 \
+    __VA_ARGS__                                                 \
+  } else if (is_causal == 2) {                                  \
+    constexpr int MASK_MODE = 2;  /* kBlockCausal */            \
+    __VA_ARGS__                                                 \
   }  else {                                                     \
     std::ostringstream err_msg;                                 \
     err_msg << "Unsupported causal mode: " << int(is_causal);   \
