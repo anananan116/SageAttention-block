@@ -28,7 +28,7 @@ torch::Tensor qk_int8_sv_f8_accum_f32_attn_inst_buf(
                     int qk_quant_gran,
                     float sm_scale,
                     int return_lse,
-                    torch::optional<std::vector<int32_t>> block_ends = torch::nullopt);
+                    int block_mask_mode = 0);
 
 torch::Tensor qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(
                     torch::Tensor query,
@@ -43,4 +43,4 @@ torch::Tensor qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(
                     int qk_quant_gran,
                     float sm_scale,
                     int return_lse,
-                    torch::optional<std::vector<int32_t>> block_ends = torch::nullopt);
+                    int block_mask_mode = 0);

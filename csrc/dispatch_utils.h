@@ -129,3 +129,19 @@
     err_msg << "Unsupported warp_block_size " << int(warp_block_size);   \
     throw std::invalid_argument(err_msg.str());                          \
   }
+
+#define DISPATCH_BLOCK_MASK_MODE(block_mask_mode, BLOCK_MASK_MODE, ...)  \
+  if (block_mask_mode == 0) {                                            \
+    constexpr int BLOCK_MASK_MODE = 0;                                   \
+    __VA_ARGS__                                                          \
+  } else if (block_mask_mode == 1) {                                     \
+    constexpr int BLOCK_MASK_MODE = 1;                                   \
+    __VA_ARGS__                                                          \
+  } else if (block_mask_mode == 2) {                                     \
+    constexpr int BLOCK_MASK_MODE = 2;                                   \
+    __VA_ARGS__                                                          \
+  } else {                                                               \
+    std::ostringstream err_msg;                                          \
+    err_msg << "Unsupported block_mask_mode " << int(block_mask_mode);   \
+    throw std::invalid_argument(err_msg.str());                          \
+  }

@@ -81,7 +81,7 @@ def sageattn(
     is_causal: bool = False,
     sm_scale: Optional[float] = None,
     return_lse: bool = False,
-    block_ends: Optional[List[int]] = None,
+    mask_type: int = 0,
     **kwargs: Any,
 ):
     """
@@ -157,7 +157,7 @@ def sageattn(
     elif arch == "sm89":
         return sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp16")
     elif arch == "sm90":
-        return sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp32", block_ends=block_ends)
+        return sageattn_qk_int8_pv_fp8_cuda_sm90(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp32", mask_type=mask_type)
     elif arch == "sm120":
         return sageattn_qk_int8_pv_fp8_cuda(q, k, v, tensor_layout=tensor_layout, is_causal=is_causal, qk_quant_gran="per_warp", sm_scale=sm_scale, return_lse=return_lse, pv_accum_dtype="fp32+fp16") # sm120 has accurate fp32 accumulator for fp8 mma and triton kernel is currently not usable on sm120.
     else:
@@ -795,7 +795,7 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     pv_accum_dtype: str = "fp32+fp32",
     smooth_k: bool = True,
     return_lse: bool = False,
-    block_ends: Optional[List[int]] = None,
+    mask_type: int = 0,
     **kwargs: Any,
 ) -> torch.Tensor:
     """
@@ -893,8 +893,6 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
     # Handle is_causal parameter - support both bool and string
     if isinstance(is_causal, str) and is_causal == "block_causal":
         _is_causal = 2  # Block causal mode
-        if block_ends is None:
-            raise ValueError("block_ends must be provided when is_causal='block_causal'")
     elif is_causal:
         _is_causal = 1  # Standard causal
     else:
@@ -957,7 +955,7 @@ def sageattn_qk_int8_pv_fp8_cuda_sm90(
         raise NotImplementedError("Please use pv_accum_dtype='fp32+fp32' for sm90.")
         lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse)
     elif pv_accum_dtype == "fp32+fp32":
-        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse, block_ends)
+        lse = _qattn_sm90.qk_int8_sv_f8_accum_f32_fuse_v_scale_attn_inst_buf(q_int8, k_int8, v_fp8, o, q_scale, k_scale, v_scale, _tensor_layout, _is_causal, _qk_quant_gran, sm_scale, _return_lse, mask_type)
 
     o = o[..., :head_dim_og]
 
