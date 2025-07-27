@@ -78,7 +78,7 @@ for i in range(device_count):
 
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
 if not compute_capabilities:
-    raise RuntimeError("No GPUs found. Please specify the target GPU architectures or build on a machine with GPUs.")
+     compute_capabilities.add("9.0") #default to H100
 else:
     print(f"Detect GPUs with compute capabilities: {compute_capabilities}")
 
